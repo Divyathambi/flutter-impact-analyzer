@@ -1,8 +1,8 @@
-package com.flutterkeyimpact.ui
+package com.flutterImpactAnalyzer.listeners
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
-import org.example.KeyUsageFinder
+import com.flutterImpactAnalyzer.listeners.KeyUsageFinder
 
 object ImpactDialog {
 

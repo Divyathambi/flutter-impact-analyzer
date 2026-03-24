@@ -1,9 +1,8 @@
-package org.example
+package com.flutterImpactAnalyzer.listeners
 
 import com.intellij.openapi.project.Project
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
-
 
 object KeyUsageFinder {
 

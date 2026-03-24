@@ -1,0 +1,28 @@
+<idea-plugin>
+    <id>com.flutterkeyimpact.detector</id>
+    <name>Flutter Key Impact Detector</name>
+    <vendor email="dev@example.com">Flutter Tools</vendor>
+
+    <description>
+        Detects Flutter Key changes and shows impacted files.
+    </description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <!-- Optional for now -->
+    <!-- <depends>org.jetbrains.plugins.dart</depends> -->
+    <!-- <depends>io.flutter</depends> -->
+
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="com.flutterImpactAnalyzer.listeners.KeyChangeListener"/>
+    </extensions>
+
+    <actions>
+        <action id="FlutterKeyImpact.TestAction"
+                class="com.flutterImpactAnalyzer.listeners.TestAction"
+                text="Test Flutter Key Plugin"
+                description="Test action">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

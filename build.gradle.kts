@@ -1,5 +1,5 @@
 plugins {
-    id("org.jetbrains.intellij") version "1.17.2"
+    id("org.jetbrains.intellij.platform") version "2.0.0"
     kotlin("jvm") version "1.9.22"
 }
 
@@ -8,13 +8,30 @@ version = "1.0.0"
 
 repositories {
     mavenCentral()
+
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
-intellij {
-    type.set("AI")
-    version.set("2023.1.1.28")
+dependencies {
+    intellijPlatform {
+        androidStudio("2023.1.1.28")
+
+        instrumentationTools()
+    }
+}
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+    kotlinOptions.jvmTarget = "17"
+}
+
+tasks {
+    buildSearchableOptions {
+        enabled = false
+    }
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(17)
 }

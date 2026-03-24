@@ -1,7 +1,9 @@
-package org.example
+package com.flutterImpactAnalyzer.listeners
 
 object FlutterKeyParser {
-    private val flutterKeyRegex = Regex("""ValueKey\s*\(\s*["'](.*?)["']\s*\)""")
+    private val flutterKeyRegex = Regex(
+        """(?:Key|ValueKey)\s*\(\s*["'](.*?)["']\s*\)"""
+    )
 
     fun parseKeys(text: String): List<String> {
       val keys = mutableListOf<String>()
