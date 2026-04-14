@@ -59,14 +59,25 @@ class KeyChangeListener : ProjectActivity {
                         val removedKeys = oldKeys - newKeys
                         val addedKeys = newKeys - oldKeys
 
+                        val isTestFile = file.path.contains("test") || file.name.contains("test")
+
                         if (removedKeys.isNotEmpty() && addedKeys.isNotEmpty()) {
 
                             val oldKey = removedKeys.first()
                             val newKey = addedKeys.first()
 
+                            // Widget count detection
+                            val oldDepth = compareWidgetCount(oldText, oldKey)
+                            val newDepth = compareWidgetCount(newText, newKey)
+
+                            val depthChange = newDepth - oldDepth
+
+                            print("Depth change: $depthChange")
+
+
+
                             println("🔥 Key changed: $oldKey → $newKey")
 
-                            // Ensure indexing is complete
                             DumbService.getInstance(project).runWhenSmart {
 
                                 val impactedFiles = ApplicationManager.getApplication().runReadAction<
@@ -89,6 +100,16 @@ class KeyChangeListener : ProjectActivity {
                                         }
                                     }
 
+                                    if(depthChange != 0) {
+                                        append("Widget hierarchy change detected\n\n")
+
+                                        if(depthChange > 0) {
+                                            append("Widget has been wrapped with $depthChange widget(s)")
+                                        } else {
+                                            append("Widget has been unwrapped with ${-depthChange} widget(s)")
+                                        }
+                                    }
+
                                     append("\nApply changes across files?")
                                 }
 
@@ -103,7 +124,7 @@ class KeyChangeListener : ProjectActivity {
                                     )
 
                                     if (result == Messages.YES) {
-                                        replaceKeys(project, impactedFiles, oldKey, newKey)
+                                        replaceKeys(project, impactedFiles, oldKey, newKey, depthChange)
                                         println("Changes applied")
                                     } else {
                                         println("User cancelled")
@@ -121,6 +142,80 @@ class KeyChangeListener : ProjectActivity {
             }
 
         }, project)
+    }
+
+    // Function to update widget count in tests
+    /**
+     *
+     * Objective: Create a function that can update the widget count in tests when the widget tree surrounding a key
+     * changes
+     *
+     * Implementation:
+     *
+     * 1) There are 3 ways to find the widget count in flutter test
+     *
+     * a) findsOneWidget - If the widget count is 1
+     * b) findsWidgets - If there are multiple widgets
+     * c) findNothing - If there are no widgets
+     *
+     * 2) Find where the widget count instance is being used - use regex(),
+     * 3) If there are matching results, then proceed with the changes.
+     * 5) Arguments - int depthChange, String content, String key
+     * 6) Return type of this function - String
+     **/
+
+    private fun updateWidgetCountInTests(
+        content : String,
+        key: String,
+        depthChange : Int,
+    ) : String {
+        val keyPattern = """find\.byKey\s*\(\s*Key\s*\(\s*["']$key["']\s*\)\s*\)"""
+
+        // replace the content with the changes accordingly
+
+        return content.replace(
+            Regex("""expect\s*\(\s*$keyPattern\s*,\s*(.*?)\)"""),
+        ) {
+            matchResult ->
+
+            val fullMatch = matchResult.value
+
+            val updatedMatcher = when {
+                depthChange > 0 -> "findsWidgets"
+                depthChange < 0 -> "findsOneWidget"
+                else -> return@replace fullMatch
+            }
+
+            fullMatch.replace(
+                Regex("""finds\w+"""),
+                updatedMatcher
+            )
+        }
+    }
+
+    // Function to detect changes in the widget tree and prompt the user to make changes in the widget count accordingly.
+    /**
+     * Objective : Create a function that can detect the changes in the flutter widget tree and prompt the users to make
+     * changes in the widget tree accordingly.
+     *
+     * Implementation :
+     *
+     * 1) variable to store the count of old open and closed parenthesis
+     * 2) Compare the count of old open and closed parenthesis
+     * 3) If the new count has increased -> widget tree changes -> increase the count by 1
+     * 4) If the new count has decreased -> widget tree changes -> decrease the count by 1
+     * **/
+
+    private fun compareWidgetCount(text: String, key: String): Int {
+        val index = text.indexOf(key);
+        if(index == -1) return 0
+
+        val subString = text.substring(0, index)
+
+        val openParenth = subString.count{it == '('}
+        val closeParenth = subString.count{it == ')'}
+
+        return openParenth - closeParenth;
     }
 
     private fun extractKeys(text: String): Set<String> {
@@ -150,16 +245,26 @@ class KeyChangeListener : ProjectActivity {
         project: Project,
         files: Collection<com.intellij.openapi.vfs.VirtualFile>,
         oldKey: String,
-        newKey: String
+        newKey: String,
+        depthChange: Int
     ) {
         WriteCommandAction.runWriteCommandAction(project) {
             files.forEach { file ->
                 val content = VfsUtil.loadText(file)
 
-                val updatedContent = content.replace(
+                var updatedContent = content.replace(
                     """(Key|ValueKey)\s*\(\s*["']$oldKey["']\s*\)""".toRegex(),
-                    """Key("$newKey")"""
+                          """Key("$newKey")"""
                 )
+
+                // Apply widget count change for test files
+                if(file.path.contains("test")) {
+                    updatedContent = updateWidgetCountInTests(
+                        updatedContent,
+                        newKey,
+                        depthChange,
+                    )
+                }
 
                 VfsUtil.saveText(file, updatedContent)
             }
