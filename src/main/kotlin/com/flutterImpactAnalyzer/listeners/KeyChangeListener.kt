@@ -20,25 +20,20 @@ import java.util.TimerTask
 
 class KeyChangeListener : ProjectActivity {
 
-    private val flutterKeyRegex = Regex(
-        """(Key|ValueKey)\s*\(\s*["'](.*?)["']\s*\)"""
-    )
+    private val usageRegex = Regex("""Keys\.(\w+)""")
 
     private val previousFileContent = mutableMapOf<String, String>()
     private val debounceTimers = ConcurrentHashMap<String, Timer>()
-    private val debounceDelay = 1000L
+    private val debounceDelay = 1200L
 
     override suspend fun execute(project: Project) {
 
-        val editorFactory = EditorFactory.getInstance()
-
-        editorFactory.eventMulticaster.addDocumentListener(object : DocumentListener {
+        EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
 
             override fun documentChanged(event: DocumentEvent) {
 
                 val document = event.document
                 val file = FileDocumentManager.getInstance().getFile(document) ?: return
-
                 if (file.extension != "dart") return
 
                 val filePath = file.path
@@ -59,82 +54,100 @@ class KeyChangeListener : ProjectActivity {
                         val removedKeys = oldKeys - newKeys
                         val addedKeys = newKeys - oldKeys
 
-                        val isTestFile = file.path.contains("test") || file.name.contains("test")
-
-                        if (removedKeys.isNotEmpty() && addedKeys.isNotEmpty()) {
-
-                            val oldKey = removedKeys.first()
-                            val newKey = addedKeys.first()
-
-                            // Widget count detection
-                            val oldDepth = compareWidgetCount(oldText, oldKey)
-                            val newDepth = compareWidgetCount(newText, newKey)
-
-                            val depthChange = newDepth - oldDepth
-
-                            print("Depth change: $depthChange")
-
-
-
-                            println("🔥 Key changed: $oldKey → $newKey")
+                        ApplicationManager.getApplication().invokeLater {
 
                             DumbService.getInstance(project).runWhenSmart {
 
-                                val impactedFiles = ApplicationManager.getApplication().runReadAction<
-                                        List<com.intellij.openapi.vfs.VirtualFile>
-                                        > {
-                                    findImpactedFiles(project, oldKey, filePath)
-                                }
+                                // KEY RENAME FLOW
+                                if (removedKeys.size == 1 && addedKeys.size == 1) {
 
-                                val message = buildString {
-                                    append("Flutter Key Change Detected\n\n")
-                                    append("Old Key: $oldKey\n")
-                                    append("New Key: $newKey\n\n")
+                                    val oldKey = removedKeys.first()
+                                    val newKey = addedKeys.first()
 
-                                    append("Impacted Files:\n")
-                                    if (impactedFiles.isEmpty()) {
-                                        append("None found\n")
-                                    } else {
-                                        impactedFiles.forEach {
-                                            append("• ${it.name}\n")
-                                        }
+                                    println("Key changed: $oldKey → $newKey")
+
+                                    val impactedFiles = ApplicationManager.getApplication().runReadAction<List<com.intellij.openapi.vfs.VirtualFile>> {
+                                        findImpactedFiles(project, oldKey, filePath)
                                     }
 
-                                    if(depthChange != 0) {
-                                        append("Widget hierarchy change detected\n\n")
+                                    val message = buildString {
+                                        append("Key Change Detected\n\n")
+                                        append("Old key : $oldKey\n\n")
+                                        append("New key : $newKey\n\n")
 
-                                        if(depthChange > 0) {
-                                            append("Widget has been wrapped with $depthChange widget(s)")
+                                        append("Impacted Files:\n")
+                                        if (impactedFiles.isEmpty()) {
+                                            append("None\n")
                                         } else {
-                                            append("Widget has been unwrapped with ${-depthChange} widget(s)")
+                                            impactedFiles.forEach { append("• ${it.name}\n") }
                                         }
+
+                                        append("\nApply changes?")
                                     }
 
-                                    append("\nApply changes across files?")
-                                }
-
-                                ApplicationManager.getApplication().invokeLater {
                                     val result = Messages.showYesNoDialog(
                                         project,
                                         message,
-                                        "Flutter Key Impact Detector",
+                                        "Key Rename Detector",
                                         "Yes",
                                         "No",
                                         null
                                     )
 
                                     if (result == Messages.YES) {
-                                        replaceKeys(project, impactedFiles, oldKey, newKey, depthChange)
-                                        println("Changes applied")
-                                    } else {
-                                        println("User cancelled")
+                                        replaceKeys(project, impactedFiles, oldKey, newKey, 0)
+                                    }
+
+                                    previousFileContent[filePath] = newText
+                                    return@runWhenSmart
+                                }
+
+
+                                // WIDGET DEPTH FLOW
+                                val key = newKeys.firstOrNull() ?: return@runWhenSmart
+
+                                val oldDepth = compareWidgetCount(oldText, key)
+                                val newDepth = compareWidgetCount(newText, key)
+
+                                val depthChange = newDepth - oldDepth
+
+                                if (depthChange != 0 && removedKeys.isEmpty() && addedKeys.isEmpty()) {
+
+                                    println("Widget hierarchy changed")
+
+                                    val impactedFiles = ApplicationManager.getApplication().runReadAction<List<com.intellij.openapi.vfs.VirtualFile>> {
+                                        findImpactedFiles(project, key, filePath)
+                                    }
+
+                                    val message = buildString {
+                                        append("Widget Hierarchy Change Detected\n\n")
+
+                                        if (depthChange > 0) {
+                                            append("Widget wrapped by $depthChange level(s)")
+                                        } else {
+                                            append("Widget unwrapped by ${-depthChange} level(s)")
+                                        }
+
+                                        append("\n\nUpdate test expectations?")
+                                    }
+
+                                    val result = Messages.showYesNoDialog(
+                                        project,
+                                        message,
+                                        "Widget Depth Detector",
+                                        "Yes",
+                                        "No",
+                                        null
+                                    )
+
+                                    if (result == Messages.YES) {
+                                        replaceKeys(project, impactedFiles, key, key, depthChange)
                                     }
                                 }
+
+                                previousFileContent[filePath] = newText
                             }
                         }
-
-                        // Update snapshot AFTER processing
-                        previousFileContent[filePath] = newText
                     }
                 }, debounceDelay)
 
@@ -144,39 +157,20 @@ class KeyChangeListener : ProjectActivity {
         }, project)
     }
 
-    // Function to update widget count in tests
-    /**
-     *
-     * Objective: Create a function that can update the widget count in tests when the widget tree surrounding a key
-     * changes
-     *
-     * Implementation:
-     *
-     * 1) There are 3 ways to find the widget count in flutter test
-     *
-     * a) findsOneWidget - If the widget count is 1
-     * b) findsWidgets - If there are multiple widgets
-     * c) findNothing - If there are no widgets
-     *
-     * 2) Find where the widget count instance is being used - use regex(),
-     * 3) If there are matching results, then proceed with the changes.
-     * 5) Arguments - int depthChange, String content, String key
-     * 6) Return type of this function - String
-     **/
-
+    // =========================
+    // 📦 WIDGET COUNT UPDATE
+    // =========================
     private fun updateWidgetCountInTests(
-        content : String,
+        content: String,
         key: String,
-        depthChange : Int,
-    ) : String {
+        depthChange: Int
+    ): String {
+
         val keyPattern = """find\.byKey\s*\(\s*Key\s*\(\s*["']$key["']\s*\)\s*\)"""
 
-        // replace the content with the changes accordingly
-
         return content.replace(
-            Regex("""expect\s*\(\s*$keyPattern\s*,\s*(.*?)\)"""),
-        ) {
-            matchResult ->
+            Regex("""expect\s*\(\s*$keyPattern\s*,\s*(.*?)\)""")
+        ) { matchResult ->
 
             val fullMatch = matchResult.value
 
@@ -186,41 +180,24 @@ class KeyChangeListener : ProjectActivity {
                 else -> return@replace fullMatch
             }
 
-            fullMatch.replace(
-                Regex("""finds\w+"""),
-                updatedMatcher
-            )
+            fullMatch.replace(Regex("""finds\w+"""), updatedMatcher)
         }
     }
 
-    // Function to detect changes in the widget tree and prompt the user to make changes in the widget count accordingly.
-    /**
-     * Objective : Create a function that can detect the changes in the flutter widget tree and prompt the users to make
-     * changes in the widget tree accordingly.
-     *
-     * Implementation :
-     *
-     * 1) variable to store the count of old open and closed parenthesis
-     * 2) Compare the count of old open and closed parenthesis
-     * 3) If the new count has increased -> widget tree changes -> increase the count by 1
-     * 4) If the new count has decreased -> widget tree changes -> decrease the count by 1
-     * **/
-
     private fun compareWidgetCount(text: String, key: String): Int {
-        val index = text.indexOf(key);
-        if(index == -1) return 0
+        val index = text.indexOf(key)
+        if (index == -1) return 0
 
-        val subString = text.substring(0, index)
+        val sub = text.substring(0, index)
+        val open = sub.count { it == '(' }
+        val close = sub.count { it == ')' }
 
-        val openParenth = subString.count{it == '('}
-        val closeParenth = subString.count{it == ')'}
-
-        return openParenth - closeParenth;
+        return open - close
     }
 
     private fun extractKeys(text: String): Set<String> {
-        return flutterKeyRegex.findAll(text)
-            .map { it.groupValues[2] }
+        return usageRegex.findAll(text)
+            .map { it.groupValues[1] }
             .toSet()
     }
 
@@ -231,14 +208,12 @@ class KeyChangeListener : ProjectActivity {
     ) =
         FilenameIndex.getAllFilesByExt(project, "dart", GlobalSearchScope.projectScope(project))
             .filter { file ->
-
                 if (file.path == currentFilePath) return@filter false
 
                 val content = VfsUtil.loadText(file)
 
-                val regex = Regex("""(Key|ValueKey)\s*\(\s*["']$key["']\s*\)""")
-
-                regex.containsMatchIn(content)
+                Regex("""\bKeys\.$key\b""").containsMatchIn(content) ||
+                        Regex("""(Key|ValueKey)\s*\(\s*["']$key["']\s*\)""").containsMatchIn(content)
             }
 
     private fun replaceKeys(
@@ -250,23 +225,27 @@ class KeyChangeListener : ProjectActivity {
     ) {
         WriteCommandAction.runWriteCommandAction(project) {
             files.forEach { file ->
-                val content = VfsUtil.loadText(file)
 
-                var updatedContent = content.replace(
-                    """(Key|ValueKey)\s*\(\s*["']$oldKey["']\s*\)""".toRegex(),
-                          """Key("$newKey")"""
+                var content = VfsUtil.loadText(file)
+
+                // Replace Keys.xxx
+                content = content.replace(
+                    """\bKeys\.$oldKey\b""".toRegex(),
+                    """Keys.$newKey"""
                 )
 
-                // Apply widget count change for test files
-                if(file.path.contains("test")) {
-                    updatedContent = updateWidgetCountInTests(
-                        updatedContent,
-                        newKey,
-                        depthChange,
-                    )
+                // Replace Key("xxx") (tests)
+                content = content.replace(
+                    """(Key|ValueKey)\s*\(\s*["']$oldKey["']\s*\)""".toRegex(),
+                    """Key("$newKey")"""
+                )
+
+                // Update widget count
+                if (file.path.contains("test")) {
+                    content = updateWidgetCountInTests(content, newKey, depthChange)
                 }
 
-                VfsUtil.saveText(file, updatedContent)
+                VfsUtil.saveText(file, content)
             }
         }
     }
