@@ -13,6 +13,7 @@ import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbService
 
@@ -70,6 +71,7 @@ class KeyChangeListener : ProjectActivity {
                                         append("Old key: $oldKey\n")
                                         append("New key: $newKey\n\n")
 
+
                                         append("Impacted Files:\n")
                                         if (impactedFiles.isEmpty()) {
                                             append("None\n")
@@ -119,27 +121,35 @@ class KeyChangeListener : ProjectActivity {
                                     val message = buildString {
                                         append("Widget Hierarchy Change Detected\n\n")
 
+                                            impactedFiles.forEach {
+
+                                                if(it.path.contains("test")) {
+                                                    append("Impacted Test Files: \n")
+                                                }
+
+                                                append("• ${it.name}\n")
+                                        }
+
                                         if (depthChange > 0) {
                                             append("Widget wrapped by $depthChange level(s)")
                                         } else {
                                             append("Widget unwrapped by ${-depthChange} level(s)")
                                         }
 
-                                        append("\n\nUpdate test expectations?")
+                                        impactedFiles.forEach {
+                                            if(it.path.contains("test")) {
+                                                append("Impacted Test Files: \n")
+
+                                            }
+                                        }
                                     }
 
                                     val result = Messages.showYesNoDialog(
                                         project,
                                         message,
                                         "Flutter Widget Tree Change Detector",
-                                        "Yes",
-                                        "No",
                                         null
                                     )
-
-                                    if (result == Messages.YES) {
-                                        applyWidgetCountUpdate(project, impactedFiles, key, depthChange)
-                                    }
                                 }
 
                                 previousFileContent[filePath] = newText
@@ -188,33 +198,33 @@ class KeyChangeListener : ProjectActivity {
 
         val result = mutableListOf<com.intellij.openapi.vfs.VirtualFile>()
 
+        val scope = GlobalSearchScope.projectScope(project)
+
+        val keyUsageRegex = Regex("""\bKeys\.$key\b""")
+        val keyCtorRegex = Regex("""(Key|ValueKey)\s*\(\s*["']$key["']\s*\)""")
+
         val files = FilenameIndex.getAllFilesByExt(
             project,
             "dart",
-            GlobalSearchScope.projectScope(project)
+            scope
         )
 
-        for (vf in files) {
+        for (file in files) {
 
-            if (vf.path == currentFilePath) continue
+            if (file.path == currentFilePath) continue
 
-            val psiFile = PsiManager.getInstance(project).findFile(vf) ?: continue
-
-            var found = false
-
-            PsiTreeUtil.processElements(psiFile) { element ->
-                val text = element.text
-
-                if (text.contains("Keys.$key") ||
-                    text.contains("Key(\"$key\")") ||
-                    text.contains("ValueKey(\"$key\")")
-                ) {
-                    found = true
-                    false
-                } else true
+            val content = try {
+                VfsUtilCore.loadText(file)
+            } catch (e : Exception) {
+                println("Failed to load file: $e")
+                continue
             }
 
-            if (found) result.add(vf)
+            if(!content.contains(key)) continue
+
+            if(keyUsageRegex.containsMatchIn(content) || keyCtorRegex.containsMatchIn(content)) {
+                result.add(file)
+            }
         }
 
         return result
@@ -331,3 +341,21 @@ class KeyChangeListener : ProjectActivity {
         }
     }
 }
+
+/**
+ * What is our motive?
+ * 1) Pop up should detect the changes in the key - This is done
+ * 2) Pop up should detect the widget tree changes - This is also done
+ *
+ * What is the problem facing?
+ * 1) The update widget count is only working if the current working file is a test file
+ *
+ * What it should do?
+ * 1) It should ideally find the test files, make the changes there.
+ *
+ * What can I do to achieve that?
+ *
+ * 1) Find all the files using PSI manager. List<com.intellij.openapi.vfs.VirtualFile>
+ * 2) Check whether there are any test files. Check whether any of the file in the list, the path of it, contains the name "test"
+ * 3) IF there are any test files with the key and IF there is a widget tree change -> Then show the pop up with the list of test files impacted.
+ */
