@@ -53,8 +53,17 @@ class KeyChangeListener : ProjectActivity {
 
                             DumbService.getInstance(project).runWhenSmart {
 
+                                // Key rename for variable inside keys.dart
+                                val variableChange = findChangedKeyInDefinition(oldText, newText)
+
                                 // Key rename detection for multi key usages
-                                val change = findChangedKey(oldText, newText)
+                                val usageChange = findChangedKey(oldText, newText)
+
+                                val change = when {
+                                    variableChange != null -> variableChange
+                                    usageChange != null -> usageChange
+                                    else -> null
+                                }
 
                                 if (change != null) {
 
@@ -144,7 +153,7 @@ class KeyChangeListener : ProjectActivity {
                                         }
                                     }
 
-                                    val result = Messages.showYesNoDialog(
+                                    Messages.showYesNoDialog(
                                         project,
                                         message,
                                         "Flutter Widget Tree Change Detector",
@@ -340,6 +349,26 @@ class KeyChangeListener : ProjectActivity {
             }
         }
     }
+}
+
+private fun findChangedKeyInDefinition(
+    oldText: String,
+    newText: String,
+) : Pair<String, String>? {
+    val regex = Regex("""static\s+const\s+(\w+)\s*=\s*Key""")
+
+    val oldKeys = regex.findAll(oldText).map { it.groupValues[1] }.toList()
+    val newKeys = regex.findAll(newText).map { it.groupValues[1] }.toList()
+
+    if(oldKeys.size != newKeys.size) return null
+
+    for(i in oldKeys.indices) {
+        if(oldKeys[i] != newKeys[i]) {
+            return oldKeys[i] to newKeys[i]
+        }
+    }
+
+    return null
 }
 
 /**
